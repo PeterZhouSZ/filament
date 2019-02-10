@@ -26,7 +26,6 @@
 #include <filament/Material.h>
 #include <filament/RenderableManager.h>
 #include <filament/Scene.h>
-#include <filament/Texture.h>
 #include <filament/TransformManager.h>
 #include <filament/VertexBuffer.h>
 
@@ -61,12 +60,6 @@ struct Primitive {
 };
 using Mesh = std::vector<Primitive>;
 using MeshCache = tsl::robin_map<const cgltf_mesh*, Mesh>;
-
-// TextureCache
-// ------------
-// If a single glTF texture is referenced by multiple materials, the loader will re-use the same 
-// Filament Texture for each reference.
-using TextureCache = tsl::robin_map<const cgltf_texture*, Texture*>;
 
 struct FAssetLoader : public AssetLoader {
     FAssetLoader(Engine* engine) :
@@ -108,7 +101,8 @@ struct FAssetLoader : public AssetLoader {
     void createEntity(const cgltf_node* srcNode, Entity parent);
     void createPrimitive(const cgltf_primitive* inPrim, Primitive* outPrim);
     MaterialInstance* createMaterialInstance(const cgltf_material* inputMat);
-    Texture* getOrCreateTexture(const cgltf_texture* srcTexture);
+    void addTextureBinding(MaterialInstance* materialInstance, const char* parameterName,
+        const cgltf_texture* srcTexture);
 
     bool mCastShadows = true;
     bool mReceiveShadows = true;
@@ -124,7 +118,6 @@ struct FAssetLoader : public AssetLoader {
     FFilamentAsset* mResult;
     tsl::robin_map<const cgltf_node*, utils::Entity> mNodeToEntity; // TODO: is this actually used? maybe for skinning...
     MeshCache mMeshCache;
-    TextureCache mTextureCache;
     bool mError = false;
 };
 
@@ -182,7 +175,6 @@ void FAssetLoader::createAsset(const cgltf_data* srcAsset) {
     // We're done with the import, so free up transient bookkeeping resources.
     mNodeToEntity.clear();
     mMeshCache.clear();
-    mTextureCache.clear();
     mError = false;
 }
 
@@ -231,7 +223,7 @@ void FAssetLoader::createEntity(const cgltf_node* srcNode, Entity parent) {
             // view and accessor features already have this functionality.
             builder.geometry(index, primType, outputPrim->vertices, outputPrim->indices);
 
-            // TODO: enable sharing of material instances
+            // Create a material instance for this primitive or fetch one from the cache.
             MaterialInstance* mi = createMaterialInstance(inputPrim->material);
             builder.material(index, mi);
         }
@@ -333,14 +325,11 @@ void FAssetLoader::createPrimitive(const cgltf_primitive* inPrim, Primitive* out
 }
 
 MaterialInstance* FAssetLoader::createMaterialInstance(const cgltf_material* inputMat) {
+
+    // TODO: add a really simple cache: robin_map<const cgltf_material*, MaterialInstance*>
+
     bool has_pbr = inputMat->has_pbr_metallic_roughness;
     auto pbr_config = inputMat->pbr_metallic_roughness;
-
-    // Re-use the same sampler for all glTF textures.
-    TextureSampler sampler(
-            TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
-            TextureSampler::MagFilter::LINEAR,
-            TextureSampler::WrapMode::REPEAT);
 
     MaterialKey matkey {
         .doubleSided = (bool) inputMat->double_sided,
@@ -381,61 +370,47 @@ MaterialInstance* FAssetLoader::createMaterialInstance(const cgltf_material* inp
     }
 
     if (matkey.hasBaseColorTexture) {
-        Texture* tex = getOrCreateTexture(pbr_config.base_color_texture.texture);
-        mi->setParameter("baseColorMap", tex);
+        addTextureBinding(mi, "baseColorMap", pbr_config.base_color_texture.texture);
     }
 
     if (matkey.hasMetallicRoughnessTexture) {
-        Texture* tex = getOrCreateTexture(pbr_config.metallic_roughness_texture.texture);
-        mi->setParameter("metallicRoughnessMap", tex);
+        addTextureBinding(mi, "metallicRoughnessMap",
+                pbr_config.metallic_roughness_texture.texture);
     }
 
     if (matkey.hasNormalTexture) {
-        Texture* tex = getOrCreateTexture(inputMat->normal_texture.texture);
-        mi->setParameter("normalMap", tex);
+        addTextureBinding(mi, "normalMap", inputMat->normal_texture.texture);
     }
 
     if (matkey.hasOcclusionTexture) {
-        Texture* tex = getOrCreateTexture(inputMat->occlusion_texture.texture);
-        mi->setParameter("occlusionMap", tex);
+        addTextureBinding(mi, "occlusionMap", inputMat->occlusion_texture.texture);
     }
 
     if (matkey.hasEmissiveTexture) {
-        Texture* tex = getOrCreateTexture(inputMat->emissive_texture.texture);
-        mi->setParameter("emissiveMap", tex);
+        addTextureBinding(mi, "emissiveMap", inputMat->emissive_texture.texture);
     }
 
     return mi;
 }
 
-Texture* FAssetLoader::getOrCreateTexture(const cgltf_texture* srcTexture) {
-    auto iter = mTextureCache.find(srcTexture);
-    if (iter != mTextureCache.end()) {
-        return iter.value;
+void FAssetLoader::addTextureBinding(MaterialInstance* materialInstance, const char* parameterName,
+        const cgltf_texture* srcTexture) {
+    if (!srcTexture->image) {
+        slog.w << "Texture is missing image (" << srcTexture->name << ").\n";
+        return;
     }
-
-    const cgltf_image* image = srcTexture->image;
-        // char* uri;
-        // cgltf_buffer_view* buffer_view;
-        // char* mime_type;
-
-    const cgltf_sampler* sampler = srcTexture->sampler;
-        // cgltf_int mag_filter;
-        // cgltf_int min_filter;
-        // cgltf_int wrap_s;
-        // cgltf_int wrap_t;
-
-    Texture* result = Texture::Builder()
-        .width(uint32_t(1))
-        .height(uint32_t(1))
-        .levels(0xff)
-        .format(driver::TextureFormat::RGBA8)
-        .build(mEngine);
-
-    // TODO EYEBALL
-    mTextureCache[srcTexture] = result;
-    mResult->mTextures.push_back(result);
-    return result;
+    filament::TextureSampler sampler;
+    sampler.setWrapModeS(getWrapMode(srcTexture->sampler->wrap_s));
+    sampler.setWrapModeT(getWrapMode(srcTexture->sampler->wrap_t));
+    sampler.setMagFilter(getMagFilter(srcTexture->sampler->mag_filter));
+    sampler.setMinFilter(getMinFilter(srcTexture->sampler->min_filter));
+    mResult->mTextureBindings.push_back(TextureBinding {
+        .uri = srcTexture->image->uri,
+        .mimeType = srcTexture->image->mime_type,
+        .materialInstance = materialInstance,
+        .materialParameter = parameterName,
+        .sampler = sampler
+    });
 }
 
 AssetLoader* AssetLoader::create(Engine* engine) {

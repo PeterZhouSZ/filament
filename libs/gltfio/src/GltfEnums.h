@@ -19,11 +19,65 @@
 
 #include <filament/IndexBuffer.h>
 #include <filament/RenderableManager.h>
+#include <filament/TextureSampler.h>
 #include <filament/VertexBuffer.h>
 
 #include <utils/Log.h>
 
 #include <cgltf.h>
+
+#define GL_NEAREST                        0x2600
+#define GL_LINEAR                         0x2601
+#define GL_NEAREST_MIPMAP_NEAREST         0x2700
+#define GL_LINEAR_MIPMAP_NEAREST          0x2701
+#define GL_NEAREST_MIPMAP_LINEAR          0x2702
+#define GL_LINEAR_MIPMAP_LINEAR           0x2703
+#define GL_REPEAT                         0x2901
+#define GL_MIRRORED_REPEAT                0x8370
+#define GL_CLAMP_TO_EDGE                  0x812F
+
+inline filament::TextureSampler::WrapMode getWrapMode(cgltf_int wrap) {
+    switch (wrap) {
+        case GL_REPEAT:
+            return filament::TextureSampler::WrapMode::REPEAT;
+        case GL_MIRRORED_REPEAT:
+            return filament::TextureSampler::WrapMode::MIRRORED_REPEAT;
+        case GL_CLAMP_TO_EDGE:
+            return filament::TextureSampler::WrapMode::CLAMP_TO_EDGE;
+    }
+    utils::slog.e << "Unsupported WrapMode.\n";
+    return filament::TextureSampler::WrapMode::REPEAT;
+}
+
+inline filament::TextureSampler::MinFilter getMinFilter(cgltf_int minFilter) {
+    switch (minFilter) {
+        case GL_NEAREST:
+            return filament::TextureSampler::MinFilter::NEAREST;
+        case GL_LINEAR:
+            return filament::TextureSampler::MinFilter::LINEAR;
+        case GL_NEAREST_MIPMAP_NEAREST:
+            return filament::TextureSampler::MinFilter::NEAREST_MIPMAP_NEAREST;
+        case GL_LINEAR_MIPMAP_NEAREST:
+            return filament::TextureSampler::MinFilter::LINEAR_MIPMAP_NEAREST;
+        case GL_NEAREST_MIPMAP_LINEAR:
+            return filament::TextureSampler::MinFilter::NEAREST_MIPMAP_LINEAR;
+        case GL_LINEAR_MIPMAP_LINEAR:
+            return filament::TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR;
+    }
+    utils::slog.e << "Unsupported MinFilter.\n";
+    return filament::TextureSampler::MinFilter::NEAREST;
+}
+
+inline filament::TextureSampler::MagFilter getMagFilter(cgltf_int magFilter) {
+    switch (magFilter) {
+        case GL_NEAREST:
+            return filament::TextureSampler::MagFilter::NEAREST;
+        case GL_LINEAR:
+            return filament::TextureSampler::MagFilter::LINEAR;
+    }
+    utils::slog.e << "Unsupported MagFilter.\n";
+    return filament::TextureSampler::MagFilter::NEAREST;
+}
 
 inline bool getVertexAttribute(cgltf_attribute_type atype, filament::VertexAttribute* attrType) {
     switch (atype) {

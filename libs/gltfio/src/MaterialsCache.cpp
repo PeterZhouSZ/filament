@@ -40,12 +40,12 @@ bool MaterialsCache::EqualFn::operator()(const MaterialKey& k1, const MaterialKe
         (k1.hasOcclusionTexture == k2.hasOcclusionTexture) &&
         (k1.hasEmissiveTexture == k2.hasEmissiveTexture) &&
         (k1.alphaMode == k2.alphaMode) &&
-        (k1.alphaMaskThreshold == k2.alphaMaskThreshold) &&
         (k1.baseColorUV == k2.baseColorUV) &&
         (k1.metallicRoughnessUV == k2.metallicRoughnessUV) &&
         (k1.emissiveUV == k2.emissiveUV) &&
         (k1.aoUV == k2.aoUV) &&
-        (k1.normalUV == k2.normalUV);
+        (k1.normalUV == k2.normalUV) &&
+        (k1.alphaMaskThreshold == k2.alphaMaskThreshold);
 }
 
 MaterialsCache::MaterialsCache(Engine* engine) : mEngine(engine) {}
@@ -228,7 +228,7 @@ Material* MaterialsCache::getOrCreateMaterial(MaterialKey* config) {
     auto iter = mCache.find(*config);
     if (iter == mCache.end()) {
         Material* mat = createMaterial(mEngine, *config);
-        mCache.emplace(std::make_pair(config, mat));
+        mCache.emplace(std::make_pair(*config, mat));
         mMaterials.push_back(mat);
         return mat;
     }
